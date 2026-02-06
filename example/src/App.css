@@ -4,6 +4,16 @@
   box-sizing: border-box;
 }
 
+::selection {
+  background-color: #000000;
+  color: #ffffff;
+}
+
+::-moz-selection {
+  background-color: #000000;
+  color: #ffffff;
+}
+
 body {
   font-family: "Work Sans", sans-serif;
   font-optical-sizing: auto;
@@ -133,7 +143,7 @@ body {
 .feature-card {
   padding: 2rem;
   border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border-radius: 24px;
   text-align: center;
 }
 
@@ -161,7 +171,7 @@ body {
   margin-top: 3rem;
   padding: 2rem;
   background-color: #fafafa;
-  border-radius: 8px;
+  border-radius: 20px;
   border: 1px solid #e0e0e0;
 }
 
@@ -176,7 +186,7 @@ body {
   background-color: #000000;
   color: #ffffff;
   padding: 1.5rem;
-  border-radius: 6px;
+  border-radius: 16px;
   overflow-x: auto;
   font-family: "Courier New", monospace;
   font-size: 0.875rem;
@@ -194,7 +204,7 @@ body {
   justify-content: center;
   padding: 4rem 2rem;
   border: 2px dashed #e0e0e0;
-  border-radius: 8px;
+  border-radius: 20px;
   margin-top: 2rem;
 }
 
