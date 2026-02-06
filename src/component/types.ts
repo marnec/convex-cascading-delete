@@ -41,9 +41,9 @@ export type CascadeRule = {
  *   ]
  * }
  */
-export type CascadeConfig = {
+export interface CascadeConfig {
   [sourceTable: string]: CascadeRule[];
-};
+}
 
 /**
  * Summary of documents deleted during a cascade operation.
