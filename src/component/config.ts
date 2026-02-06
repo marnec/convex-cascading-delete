@@ -12,7 +12,7 @@ the cascade behavior across their application. The function ensures the configur
 is well-formed before returning it for use in deletion operations.
 */
 
-import { CascadeConfig } from "./types.js";
+import type { CascadeConfig } from "./types.js";
 
 /**
  * Defines cascade delete rules for an application.
