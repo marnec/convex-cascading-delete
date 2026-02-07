@@ -14,6 +14,7 @@ by intercepting direct db.delete calls.
 */
 
 import { createFunctionHandle } from "convex/server";
+import { v } from "convex/values";
 import type {
   GenericMutationCtx,
   GenericQueryCtx,
@@ -295,8 +296,8 @@ export function makeBatchDeleteHandler(
 ) {
   return internalMutationBuilder({
     args: {
-      targets: { type: "array", value: { type: "object", value: { table: { type: "string" }, id: { type: "string" } } } },
-      jobId: { type: "string" },
+      targets: v.array(v.object({ table: v.string(), id: v.string() })),
+      jobId: v.string(),
     },
     handler: async (ctx: any, { targets, jobId }: any) => {
       const batchSummary: Record<string, number> = {};
