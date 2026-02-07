@@ -5,11 +5,11 @@
 
 This module defines the fundamental types used throughout the cascading delete
 component. The CascadeRule type represents a single relationship between tables,
-specifying the target table and the index to traverse. The CascadeConfig type
-maps source tables to their cascade rules, forming a complete deletion graph.
-These types ensure compile-time safety and enable proper TypeScript inference
-across the component boundary while maintaining flexibility for various schema
-structures and relationship patterns.
+specifying the target table, the index to traverse, and the field name used in
+the index equality condition. The CascadeConfig type maps source tables to their
+cascade rules, forming a complete deletion graph. These types ensure compile-time
+safety and enable proper TypeScript inference across the component boundary while
+maintaining flexibility for various schema structures and relationship patterns.
 */
 
 /**
@@ -17,14 +17,16 @@ structures and relationship patterns.
  * 
  * @property to - The target table name where related documents exist
  * @property via - The index name on the target table used to find related documents
+ * @property field - The field name in the index used for equality matching
  * 
  * @example
- * { to: "posts", via: "by_author" }
- * // When deleting a user, find posts using the "by_author" index
+ * { to: "posts", via: "by_author", field: "authorId" }
+ * // When deleting a user, find posts using: .withIndex("by_author", q => q.eq("authorId", userId))
  */
 export type CascadeRule = {
   to: string;
   via: string;
+  field: string;
 };
 
 /**
@@ -33,11 +35,11 @@ export type CascadeRule = {
  * @example
  * {
  *   users: [
- *     { to: "posts", via: "by_author" },
- *     { to: "comments", via: "by_author" }
+ *     { to: "posts", via: "by_author", field: "authorId" },
+ *     { to: "comments", via: "by_author", field: "authorId" }
  *   ],
  *   posts: [
- *     { to: "comments", via: "by_post" }
+ *     { to: "comments", via: "by_post", field: "postId" }
  *   ]
  * }
  */
@@ -63,4 +65,16 @@ export type DeletionSummary = {
 export type DeletionTarget = {
   table: string;
   id: string;
+};
+
+/**
+ * Status information for a batch deletion job.
+ * Provides progress tracking and completion details.
+ */
+export type BatchJobStatus = {
+  status: "pending" | "processing" | "completed" | "failed";
+  totalTargetCount: number;
+  completedCount: number;
+  completedSummary: DeletionSummary;
+  error?: string;
 };

@@ -24,31 +24,42 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
-      add: FunctionReference<
+      createBatchJob: FunctionReference<
         "mutation",
         "internal",
-        { targetId: string; text: string; userId: string },
+        {
+          batchSize: number;
+          deleteHandleStr: string;
+          targets: Array<{ id: string; table: string }>;
+        },
         string,
         Name
       >;
-      list: FunctionReference<
+      getJobStatus: FunctionReference<
         "query",
         "internal",
-        { limit?: number; targetId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          targetId: string;
-          text: string;
-          userId: string;
-        }>,
+        { jobId: string },
+        {
+          completedCount: number;
+          completedSummary: string;
+          error?: string;
+          status: "pending" | "processing" | "completed" | "failed";
+          totalTargetCount: number;
+        } | null,
         Name
       >;
-      translate: FunctionReference<
-        "action",
+      kickOffProcessing: FunctionReference<
+        "mutation",
         "internal",
-        { baseUrl: string; commentId: string },
-        string,
+        { jobId: string },
+        null,
+        Name
+      >;
+      reportBatchComplete: FunctionReference<
+        "mutation",
+        "internal",
+        { batchSummary: string; jobId: string },
+        null,
         Name
       >;
     };

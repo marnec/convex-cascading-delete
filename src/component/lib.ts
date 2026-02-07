@@ -1,91 +1,207 @@
+/*
+(1.) Component backend functions for managing batch deletion job lifecycle
+(2.) Handles job creation, batch processing orchestration, and progress tracking
+(3.) Coordinates with app-side deletion handlers via function handles
+
+This module implements the component's core batch processing logic. Jobs are created
+with pending status and contain all targets to be deleted. The processing flow uses
+the scheduler to distribute deletion work across multiple transactions, respecting
+Convex's transaction limits. Each batch is processed atomically by the app's deletion
+handler, which reports completion back to the component. The 200ms delay between
+batches prevents scheduler flooding and allows concurrent operations. Status queries
+enable reactive UI updates during long-running deletion operations.
+*/
+
 import { v } from "convex/values";
-import { httpActionGeneric } from "convex/server";
-import {
-  action,
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "./_generated/server.js";
-import { api, internal } from "./_generated/api.js";
-import schema from "./schema.js";
+import { mutation, query, internalMutation } from "./_generated/server.js";
+import { internal } from "./_generated/api.js";
+import type { Id } from "./_generated/dataModel.js";
 
-const commentValidator = schema.tables.comments.validator.extend({
-  _id: v.id("comments"),
-  _creationTime: v.number(),
-});
-
-export const list = query({
+/**
+ * Creates a new batch deletion job with pending status.
+ * 
+ * @param targets - Array of documents to be deleted across batches
+ * @param deleteHandleStr - Function handle string for app's batch deletion handler
+ * @param batchSize - Number of documents to delete per batch
+ * @returns Job ID for tracking progress
+ */
+export const createBatchJob = mutation({
   args: {
-    targetId: v.string(),
-    limit: v.optional(v.number()),
-  },
-  returns: v.array(commentValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("comments")
-      .withIndex("targetId", (q) => q.eq("targetId", args.targetId))
-      .order("desc")
-      .take(args.limit ?? 100);
-  },
-});
-
-export const getComment = internalQuery({
-  args: {
-    commentId: v.id("comments"),
-  },
-  returns: v.union(v.null(), commentValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get("comments", args.commentId);
-  },
-});
-export const add = mutation({
-  args: {
-    text: v.string(),
-    userId: v.string(),
-    targetId: v.string(),
-  },
-  returns: v.id("comments"),
-  handler: async (ctx, args) => {
-    const commentId = await ctx.db.insert("comments", {
-      text: args.text,
-      userId: args.userId,
-      targetId: args.targetId,
-    });
-    return commentId;
-  },
-});
-export const updateComment = internalMutation({
-  args: {
-    commentId: v.id("comments"),
-    text: v.string(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch("comments", args.commentId, { text: args.text });
-  },
-});
-
-export const translate = action({
-  args: {
-    commentId: v.id("comments"),
-    baseUrl: v.string(),
+    targets: v.array(v.object({ table: v.string(), id: v.string() })),
+    deleteHandleStr: v.string(),
+    batchSize: v.number(),
   },
   returns: v.string(),
-  handler: async (ctx, args) => {
-    const comment = (await ctx.runQuery(internal.lib.getComment, {
-      commentId: args.commentId,
-    })) as { text: string; userId: string } | null;
-    if (!comment) {
-      throw new Error("Comment not found");
-    }
-    const response = await fetch(
-      `${args.baseUrl}/api/translate?english=${encodeURIComponent(comment.text)}`,
-    );
-    const data = await response.text();
-    await ctx.runMutation(internal.lib.updateComment, {
-      commentId: args.commentId,
-      text: data,
+  handler: async (ctx, { targets, deleteHandleStr, batchSize }) => {
+    const jobId = await ctx.db.insert("deletionJobs", {
+      status: "pending",
+      totalTargetCount: targets.length,
+      remainingTargets: targets,
+      batchSize,
+      deleteHandleStr,
+      completedCount: 0,
+      completedSummary: JSON.stringify({}),
     });
-    return data;
+
+    return jobId;
+  },
+});
+
+/**
+ * Initiates batch processing for a pending job.
+ * Sets status to processing and triggers first batch.
+ * 
+ * @param jobId - ID of the job to start processing
+ */
+export const kickOffProcessing = mutation({
+  args: { jobId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.db.get(jobId as Id<"deletionJobs">);
+    if (!job) {
+      throw new Error(`Job ${jobId} not found`);
+    }
+
+    if (job.status !== "pending") {
+      throw new Error(`Job ${jobId} is not in pending state`);
+    }
+
+    await ctx.db.patch(jobId as Id<"deletionJobs">, {
+      status: "processing",
+    });
+
+    await ctx.scheduler.runAfter(0, internal.lib.processNextBatch as any, { jobId });
+  },
+});
+
+/**
+ * Processes the next batch of deletions for a job.
+ * Schedules app's deletion handler and reschedules itself if more batches remain.
+ * 
+ * @param jobId - ID of the job being processed
+ */
+export const processNextBatch = internalMutation({
+  args: { jobId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.db.get(jobId as Id<"deletionJobs">);
+    if (!job) {
+      return;
+    }
+
+    if (job.status !== "processing") {
+      return;
+    }
+
+    if (job.remainingTargets.length === 0) {
+      return;
+    }
+
+    const batch = job.remainingTargets.slice(0, job.batchSize);
+    const remaining = job.remainingTargets.slice(job.batchSize);
+
+    await ctx.db.patch(jobId as Id<"deletionJobs">, {
+      remainingTargets: remaining,
+    });
+
+    const deleteHandle = job.deleteHandleStr as any;
+    await ctx.scheduler.runAfter(0, deleteHandle, {
+      targets: batch,
+      jobId,
+    });
+
+    if (remaining.length > 0) {
+      await ctx.scheduler.runAfter(200, internal.lib.processNextBatch as any, {
+        jobId,
+      });
+    }
+  },
+});
+
+/**
+ * Records completion of a batch and updates job progress.
+ * Marks job as completed when all batches finish.
+ * 
+ * @param jobId - ID of the job
+ * @param batchSummary - JSON string of deletion counts for this batch
+ */
+export const reportBatchComplete = mutation({
+  args: {
+    jobId: v.string(),
+    batchSummary: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { jobId, batchSummary }) => {
+    const job = await ctx.db.get(jobId as Id<"deletionJobs">);
+    if (!job) {
+      return;
+    }
+
+    const currentSummary = JSON.parse(job.completedSummary);
+    const batchCounts = JSON.parse(batchSummary);
+
+    for (const [table, count] of Object.entries(batchCounts)) {
+      currentSummary[table] = (currentSummary[table] || 0) + (count as number);
+    }
+
+    const batchCount = Object.values(batchCounts).reduce(
+      (sum: number, count) => sum + (count as number),
+      0
+    );
+    const newCompletedCount = job.completedCount + batchCount;
+
+    const updates: any = {
+      completedCount: newCompletedCount,
+      completedSummary: JSON.stringify(currentSummary),
+    };
+
+    if (
+      newCompletedCount >= job.totalTargetCount &&
+      job.remainingTargets.length === 0
+    ) {
+      updates.status = "completed";
+    }
+
+    await ctx.db.patch(jobId as Id<"deletionJobs">, updates);
+  },
+});
+
+/**
+ * Retrieves current status of a deletion job.
+ * Reactive query that updates as batches complete.
+ * 
+ * @param jobId - ID of the job to query
+ * @returns Job status with progress information
+ */
+export const getJobStatus = query({
+  args: { jobId: v.string() },
+  returns: v.union(
+    v.object({
+      status: v.union(
+        v.literal("pending"),
+        v.literal("processing"),
+        v.literal("completed"),
+        v.literal("failed")
+      ),
+      totalTargetCount: v.number(),
+      completedCount: v.number(),
+      completedSummary: v.string(),
+      error: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.db.get(jobId as Id<"deletionJobs">);
+    if (!job) {
+      return null;
+    }
+
+    return {
+      status: job.status,
+      totalTargetCount: job.totalTargetCount,
+      completedCount: job.completedCount,
+      completedSummary: job.completedSummary,
+      error: job.error,
+    };
   },
 });
