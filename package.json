@@ -1,6 +1,6 @@
 {
   "name": "@00akshatsinha00/convex-cascading-delete",
-  "description": "A convex cascading delete component for Convex.",
+  "description": "A Convex component for managing cascading deletes across related documents with atomic and batched deletion modes.",
   "repository": "github:akshatsinha0/convex-cascading-delete",
   "homepage": "https://github.com/akshatsinha0/convex-cascading-delete#readme",
   "bugs": {

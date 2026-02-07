@@ -9,6 +9,7 @@
  */
 
 import type * as cascading from "../cascading.js";
+import type * as http from "../http.js";
 import type * as operations from "../operations.js";
 
 import type {
@@ -19,6 +20,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   cascading: typeof cascading;
+  http: typeof http;
   operations: typeof operations;
 }>;
 

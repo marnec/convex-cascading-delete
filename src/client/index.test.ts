@@ -1,0 +1,399 @@
+/*
+(1.) Test suite for CascadingDelete client API and utility functions
+(2.) Validates inline deletion traversal, cycle detection, and batch coordination
+(3.) Uses mock database context to simulate Convex query and mutation patterns
+
+This test suite exercises the CascadingDelete class which serves as the primary
+interface for applications using the component. It tests the core deletion algorithms
+including depth-first post-order traversal, visited-set cycle detection, and the
+batch coordination logic that bridges app-side deletion with component-side job
+management. Mock database contexts simulate the Convex query builder pattern
+(query → withIndex → collect) to verify correct traversal and deletion ordering
+without requiring a full Convex runtime environment.
+*/
+
+import { describe, it, expect, vi } from "vitest";
+import type { CascadeConfig } from "../component/types.js";
+
+vi.mock("convex/server", async () => {
+  const actual: any = await vi.importActual("convex/server");
+  return {
+    ...actual,
+    createFunctionHandle: vi.fn(async () => "mock-function-handle"),
+  };
+});
+
+const { CascadingDelete } = await import("./index.js");
+
+/**
+ * Creates a mock database context that simulates Convex's query builder pattern.
+ * Supports query → withIndex → collect chain with field-based filtering.
+ */
+function createMockDb(tables: Record<string, any[]>) {
+  const deleted: string[] = [];
+  const deletedSet = new Set<string>();
+
+  return {
+    query: (table: string) => ({
+      withIndex: (_indexName: string, fn: (q: any) => any) => {
+        let filterField: string | null = null;
+        let filterValue: string | null = null;
+
+        const queryBuilder: any = {
+          eq: (field: string, value: string) => {
+            filterField = field;
+            filterValue = value;
+            return queryBuilder;
+          },
+        };
+
+        fn(queryBuilder);
+
+        return {
+          collect: async () => {
+            const docs = tables[table] || [];
+            if (filterField && filterValue) {
+              return docs.filter(
+                (d) =>
+                  !deletedSet.has(d._id) &&
+                  d[filterField!] === filterValue
+              );
+            }
+            return docs.filter((d) => !deletedSet.has(d._id));
+          },
+          first: async () => {
+            const docs = tables[table] || [];
+            if (filterField && filterValue) {
+              return (
+                docs.find(
+                  (d) =>
+                    !deletedSet.has(d._id) &&
+                    d[filterField!] === filterValue
+                ) || null
+              );
+            }
+            return docs.find((d) => !deletedSet.has(d._id)) || null;
+          },
+        };
+      },
+    }),
+    delete: async (id: string) => {
+      if (deletedSet.has(id)) {
+        throw new Error(`Document ${id} already deleted`);
+      }
+      deletedSet.add(id);
+      deleted.push(id);
+    },
+    _deleted: deleted,
+    _deletedSet: deletedSet,
+  };
+}
+
+function createMockCtx(db: any) {
+  return {
+    db,
+    runMutation: vi.fn(async () => "mock-job-id"),
+    runQuery: vi.fn(),
+    scheduler: {
+      runAfter: vi.fn(),
+      runAt: vi.fn(),
+      cancel: vi.fn(),
+    },
+  };
+}
+
+const noopComponent: any = {
+  lib: {
+    createBatchJob: "component.lib.createBatchJob",
+    kickOffProcessing: "component.lib.kickOffProcessing",
+    reportBatchComplete: "component.lib.reportBatchComplete",
+    getJobStatus: "component.lib.getJobStatus",
+  },
+};
+
+describe("CascadingDelete", () => {
+  describe("constructor", () => {
+    it("should store rules from options", () => {
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+
+      const cd = new CascadingDelete(noopComponent, { rules });
+      expect(cd).toBeDefined();
+    });
+  });
+
+  describe("deleteWithCascade", () => {
+    it("should delete a single document with no cascade rules", async () => {
+      const db = createMockDb({});
+      const ctx = createMockCtx(db);
+      const cd = new CascadingDelete(noopComponent, { rules: {} });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      expect(summary).toEqual({ users: 1 });
+      expect(db._deleted).toEqual(["user1"]);
+    });
+
+    it("should cascade to direct dependents", async () => {
+      const db = createMockDb({
+        posts: [
+          { _id: "post1", authorId: "user1", title: "First" },
+          { _id: "post2", authorId: "user1", title: "Second" },
+          { _id: "post3", authorId: "user2", title: "Other" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      expect(summary).toEqual({ users: 1, posts: 2 });
+      expect(db._deleted).toContain("post1");
+      expect(db._deleted).toContain("post2");
+      expect(db._deleted).toContain("user1");
+      expect(db._deleted).not.toContain("post3");
+    });
+
+    it("should cascade through multiple levels", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+        comments: [
+          { _id: "comment1", postId: "post1" },
+          { _id: "comment2", postId: "post1" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+        posts: [{ to: "comments", via: "by_post", field: "postId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      expect(summary).toEqual({ users: 1, posts: 1, comments: 2 });
+      expect(db._deleted).toHaveLength(4);
+    });
+
+    it("should use post-order deletion (children before parents)", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+        comments: [{ _id: "comment1", postId: "post1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+        posts: [{ to: "comments", via: "by_post", field: "postId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // Post-order: deepest children first
+      expect(db._deleted.indexOf("comment1")).toBeLessThan(
+        db._deleted.indexOf("post1")
+      );
+      expect(db._deleted.indexOf("post1")).toBeLessThan(
+        db._deleted.indexOf("user1")
+      );
+    });
+
+    it("should handle branching cascades (multiple rules per table)", async () => {
+      const db = createMockDb({
+        members: [
+          { _id: "m1", teamId: "team1" },
+          { _id: "m2", teamId: "team1" },
+        ],
+        projects: [{ _id: "proj1", teamId: "team1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        teams: [
+          { to: "members", via: "byTeamId", field: "teamId" },
+          { to: "projects", via: "byTeamId", field: "teamId" },
+        ],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "teams", "team1");
+
+      expect(summary).toEqual({ teams: 1, members: 2, projects: 1 });
+      expect(db._deleted).toHaveLength(4);
+    });
+
+    it("should detect cycles and avoid infinite recursion", async () => {
+      // Simulate a scenario where A references B and B references A
+      const db = createMockDb({
+        tableB: [{ _id: "b1", refA: "a1" }],
+        tableA: [{ _id: "a1", refB: "b1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        tableA: [{ to: "tableB", via: "byRefA", field: "refA" }],
+        tableB: [{ to: "tableA", via: "byRefB", field: "refB" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      // Should not hang or throw - visited set prevents infinite recursion
+      const summary = await cd.deleteWithCascade(ctx, "tableA", "a1");
+
+      expect(summary.tableA).toBe(1);
+      expect(summary.tableB).toBe(1);
+    });
+
+    it("should handle no dependents found", async () => {
+      const db = createMockDb({
+        posts: [], // No posts exist
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      expect(summary).toEqual({ users: 1 });
+      expect(db._deleted).toEqual(["user1"]);
+    });
+
+    it("should handle already-deleted documents gracefully", async () => {
+      const db = createMockDb({});
+      // Pre-delete the document
+      db._deletedSet.add("user1");
+      const ctx = createMockCtx(db);
+
+      const cd = new CascadingDelete(noopComponent, { rules: {} });
+
+      // Should not throw - catch block handles already-deleted
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // Summary won't include the already-deleted doc since delete throws
+      expect(summary.users).toBeUndefined();
+    });
+  });
+
+  describe("deleteWithCascadeBatched", () => {
+    it("should delete all targets inline when under batch size", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const result = await cd.deleteWithCascadeBatched(ctx, "users", "user1", {
+        batchHandlerRef: "mockRef" as any,
+        batchSize: 100,
+      });
+
+      // All deleted inline, no job needed
+      expect(result.jobId).toBeNull();
+      expect(result.initialSummary).toEqual({ users: 1, posts: 1 });
+      expect(db._deleted).toHaveLength(2);
+    });
+
+    it("should create a batch job for overflow targets", async () => {
+      const db = createMockDb({
+        posts: [
+          { _id: "post1", authorId: "user1" },
+          { _id: "post2", authorId: "user1" },
+          { _id: "post3", authorId: "user1" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const result = await cd.deleteWithCascadeBatched(ctx, "users", "user1", {
+        batchHandlerRef: "mockRef" as any,
+        batchSize: 2,
+      });
+
+      // First batch of 2 deleted inline
+      expect(db._deleted).toHaveLength(2);
+      // Remaining 2 go to batch job
+      expect(result.jobId).toBe("mock-job-id");
+      expect(ctx.runMutation).toHaveBeenCalled();
+    });
+  });
+
+  describe("patchDb", () => {
+    it("should throw when delete is called on patched db", () => {
+      const cd = new CascadingDelete(noopComponent, { rules: {} });
+      const db = { delete: () => {}, query: () => {} };
+      const patched = cd.patchDb(db);
+
+      expect(() => patched.delete("id")).toThrow(
+        "Direct db.delete() is disabled"
+      );
+    });
+
+    it("should allow non-delete operations on patched db", () => {
+      const cd = new CascadingDelete(noopComponent, { rules: {} });
+      const mockQuery = vi.fn().mockReturnValue("result");
+      const db = { delete: () => {}, query: mockQuery, get: vi.fn() };
+      const patched = cd.patchDb(db);
+
+      patched.query("users");
+      expect(mockQuery).toHaveBeenCalledWith("users");
+
+      patched.get("id");
+      expect(db.get).toHaveBeenCalledWith("id");
+    });
+  });
+
+  describe("validateRules", () => {
+    it("should succeed when indexes exist", async () => {
+      const db = createMockDb({
+        posts: [],
+      });
+      const ctx = { db };
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      await expect(cd.validateRules(ctx)).resolves.toBeUndefined();
+    });
+
+    it("should throw when index query fails", async () => {
+      const db = {
+        query: () => ({
+          withIndex: () => ({
+            first: async () => {
+              throw new Error("Index not found");
+            },
+          }),
+        }),
+      };
+      const ctx = { db };
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "nonexistent_index", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      await expect(cd.validateRules(ctx)).rejects.toThrow(
+        "Cascade validation failed"
+      );
+    });
+  });
+});

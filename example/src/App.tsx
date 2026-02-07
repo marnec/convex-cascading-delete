@@ -23,6 +23,7 @@ function App() {
   const jobStatus = useDeletionJobStatus(api as any, jobId);
 
   const seedData = useMutation(api.operations.seedSampleData);
+  const seedLarge = useMutation(api.operations.seedLargeDataset);
   const clearData = useMutation(api.operations.clearAllData);
   const deleteOrg = useMutation(api.operations.deleteOrganization);
   const deleteOrgBatched = useMutation(api.operations.deleteOrganizationBatched);
@@ -196,6 +197,18 @@ const summary = await cd.deleteWithCascade(ctx, "users", userId);
                   <path d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                 </svg>
                 Seed Sample Data
+              </button>
+              <button className="demo-button primary" onClick={() => seedLarge()}>
+                <svg
+                  className="button-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                </svg>
+                Seed Large Dataset
               </button>
               <button className="demo-button secondary" onClick={handleClearData}>
                 <svg
