@@ -14,7 +14,8 @@ the component in their own applications.
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
-import { cd, _cascadeBatchHandler } from "./cascading.js";
+import { cd } from "./cascading.js";
+import { internal } from "./_generated/api.js";
 
 /**
  * Deletes an organization and all related data using inline mode.
@@ -52,7 +53,7 @@ export const deleteOrganizationBatched = mutation({
       "organizations",
       organizationId,
       {
-        batchHandlerRef: _cascadeBatchHandler,
+        batchHandlerRef: (internal as any).cascading._cascadeBatchHandler,
         batchSize: batchSize || 2000,
       }
     );
