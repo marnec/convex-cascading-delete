@@ -5,10 +5,18 @@ import { api } from "../convex/_generated/api";
 import { useDeletionJobStatus } from "@00akshatsinha00/convex-cascading-delete/react";
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"overview" | "demo">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "demo">(() => {
+    const saved = localStorage.getItem("activeTab");
+    return (saved === "demo" || saved === "overview") ? saved : "overview";
+  });
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [lastSummary, setLastSummary] = useState<any>(null);
+
+  const handleTabChange = (tab: "overview" | "demo") => {
+    setActiveTab(tab);
+    localStorage.setItem("activeTab", tab);
+  };
 
   const organizations = useQuery(api.operations.getAllOrganizations);
   const counts = useQuery(api.operations.getDocumentCounts);
@@ -65,15 +73,15 @@ function App() {
       <nav className="nav">
         <button
           className={`nav-item ${activeTab === "overview" ? "active" : ""}`}
-          onClick={() => setActiveTab("overview")}
+          onClick={() => handleTabChange("overview")}
         >
           Overview
         </button>
         <button
           className={`nav-item ${activeTab === "demo" ? "active" : ""}`}
-          onClick={() => setActiveTab("demo")}
+          onClick={() => handleTabChange("demo")}
         >
-          Interactive Demo
+          Demo
         </button>
       </nav>
 
@@ -168,7 +176,7 @@ const summary = await cd.deleteWithCascade(ctx, "users", userId);
 
         {activeTab === "demo" && (
           <div className="section">
-            <h2 className="section-title">Interactive Demo</h2>
+            <h2 className="section-title">Demo</h2>
             <p className="text">
               Try out cascading deletes with a sample organizational hierarchy.
               Create sample data, then delete organizations to see how all
