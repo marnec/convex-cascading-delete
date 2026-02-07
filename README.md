@@ -318,9 +318,9 @@ const rules = defineCascadeRules({
 │  │                                  │                           │
 │  │  const cd = new CascadingDelete( │                           │
 │  │    components.convexCascadingDel,│                           │
-│  │    { rules: { ... } }           │                           │
+│  │    { rules: { ... } }            │                           │
 │  │  );                              │                           │
-│  │                                  │  ctx.db (APP's tables)   │
+│  │                                  │  ctx.db (APP's tables)    │
 │  │  // Inline mode:                 │─────► .query(table)       │
 │  │  cd.deleteWithCascade(ctx,       │      .withIndex(idx, ...) │
 │  │    "teams", teamId)              │      .collect()           │
@@ -331,8 +331,8 @@ const rules = defineCascadeRules({
 │  │                                  │                           │
 │  └──────────┬───────────────────────┘                           │
 │             │                                                   │
-│             │ ctx.runMutation(component.lib.createBatchJob, ...) │
-│             │ ctx.runQuery(component.lib.getJobStatus, ...)      │
+│             │ ctx.runMutation(component.lib.createBatchJob, ...)│
+│             │ ctx.runQuery(component.lib.getJobStatus, ...)     │
 │             ▼                                                   │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  COMPONENT (Isolated — own DB, own transactions)         │   │
@@ -341,12 +341,12 @@ const rules = defineCascadeRules({
 │  │    { status, targets, deleteHandle, batchSize, summary } │   │
 │  │                                                          │   │
 │  │  Functions:                                              │   │
-│  │    createBatchJob(targets, handle, batchSize)             │   │
-│  │    processNextBatch(jobId)                                │   │
-│  │      ├─ ctx.scheduler.runAfter(0, deleteHandle, batch)    │──►│
-│  │      └─ ctx.scheduler.runAfter(200ms, self, jobId)        │   │
-│  │    getJobStatus(jobId) → reactive query                   │   │
-│  │    reportBatchComplete(jobId, summary)                     │   │
+│  │    createBatchJob(targets, handle, batchSize)            │   │
+│  │    processNextBatch(jobId)                               │   │
+│  │      ├─ ctx.scheduler.runAfter(0, deleteHandle, batch)   │──►│
+│  │      └─ ctx.scheduler.runAfter(200ms, self, jobId)       │   │
+│  │    getJobStatus(jobId) → reactive query                  │   │
+│  │    reportBatchComplete(jobId, summary)                   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │             │                                                   │
 │             │ Function handle callback                          │

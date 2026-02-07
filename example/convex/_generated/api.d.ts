@@ -8,8 +8,8 @@
  * @module
  */
 
-import type * as example from "../example.js";
-import type * as http from "../http.js";
+import type * as cascading from "../cascading.js";
+import type * as operations from "../operations.js";
 
 import type {
   ApiFromModules,
@@ -18,8 +18,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  example: typeof example;
-  http: typeof http;
+  cascading: typeof cascading;
+  operations: typeof operations;
 }>;
 
 /**
