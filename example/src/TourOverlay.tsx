@@ -46,7 +46,7 @@ export function TourOverlay({
   organizationsLength,
 }: TourOverlayProps) {
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const positionedForStep = useRef(-1);
+  const [positionedForStep, setPositionedForStep] = useState(-1);
   const [highlightStyle, setHighlightStyle] = useState<React.CSSProperties>({});
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
   const [arrowLeft, setArrowLeft] = useState(0);
@@ -96,7 +96,7 @@ export function TourOverlay({
       tTop = rect.bottom + gap;
     }
 
-    positionedForStep.current = tourStep;
+    setPositionedForStep(tourStep);
     setPlacement(newPlacement);
     setTooltipStyle({ top: tTop, left: tLeft, width: tooltipW });
     setArrowLeft(rect.left + rect.width / 2 - tLeft - 10);
@@ -116,7 +116,7 @@ export function TourOverlay({
 
   const hasHighlight =
     tourStep > 0 &&
-    positionedForStep.current === tourStep &&
+    positionedForStep === tourStep &&
     Object.keys(highlightStyle).length > 0;
 
   useEffect(() => {
