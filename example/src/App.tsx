@@ -2,7 +2,6 @@ import "./App.css";
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
-import { useDeletionJobStatus } from "@00akshatsinha00/convex-cascading-delete/react";
 
 function App() {
   const [activeTab, setActiveTab] = useState<"overview" | "demo">(() => {
@@ -20,7 +19,10 @@ function App() {
 
   const organizations = useQuery(api.operations.getAllOrganizations);
   const counts = useQuery(api.operations.getDocumentCounts);
-  const jobStatus = useDeletionJobStatus(api as any, jobId);
+  const jobStatus = useQuery(
+    api.operations.getDeletionJobStatus,
+    jobId ? { jobId } : "skip"
+  );
 
   const seedData = useMutation(api.operations.seedSampleData);
   const seedLarge = useMutation(api.operations.seedLargeDataset);

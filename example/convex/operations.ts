@@ -15,7 +15,7 @@ the component in their own applications.
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
 import { cd } from "./cascading.js";
-import { internal } from "./_generated/api.js";
+import { internal, components } from "./_generated/api.js";
 
 /**
  * Deletes an organization and all related data using inline mode.
@@ -58,6 +58,35 @@ export const deleteOrganizationBatched = mutation({
       }
     );
     return result;
+  },
+});
+
+/**
+ * Wrapper query to get deletion job status from the component.
+ * Enables React hooks to access component queries through the app's API.
+ */
+export const getDeletionJobStatus = query({
+  args: { jobId: v.string() },
+  returns: v.union(
+    v.object({
+      status: v.union(
+        v.literal("pending"),
+        v.literal("processing"),
+        v.literal("completed"),
+        v.literal("failed")
+      ),
+      totalTargetCount: v.number(),
+      completedCount: v.number(),
+      completedSummary: v.string(),
+      error: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, { jobId }) => {
+    return await ctx.runQuery(
+      components.convexCascadingDelete.lib.getJobStatus,
+      { jobId }
+    );
   },
 });
 
