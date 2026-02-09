@@ -124,14 +124,16 @@ export const processNextBatch = internalMutation({
  * 
  * @param jobId - ID of the job
  * @param batchSummary - JSON string of deletion counts for this batch
+ * @param errors - Optional JSON string array of error messages for observability
  */
 export const reportBatchComplete = mutation({
   args: {
     jobId: v.string(),
     batchSummary: v.string(),
+    errors: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { jobId, batchSummary }) => {
+  handler: async (ctx, { jobId, batchSummary, errors }) => {
     const job = await ctx.db.get(jobId as Id<"deletionJobs">);
     if (!job) {
       return;
@@ -154,6 +156,13 @@ export const reportBatchComplete = mutation({
       completedCount: newCompletedCount,
       completedSummary: JSON.stringify(currentSummary),
     };
+
+    // Accumulate errors for observability
+    if (errors) {
+      const batchErrors = JSON.parse(errors);
+      const existingErrors = job.error ? JSON.parse(job.error) : [];
+      updates.error = JSON.stringify([...existingErrors, ...batchErrors]);
+    }
 
     if (
       newCompletedCount >= job.totalTargetCount &&

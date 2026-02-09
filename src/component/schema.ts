@@ -30,7 +30,7 @@ export default defineSchema({
     batchSize: v.number(),
     deleteHandleStr: v.string(),
     completedCount: v.number(),
-    completedSummary: v.string(),
-    error: v.optional(v.string()),
+    completedSummary: v.string(),   // JSON-serialized Record<string, number>
+    error: v.optional(v.string()),  // JSON-serialized string[] of error messages
   }).index("byStatus", ["status"]),
 });

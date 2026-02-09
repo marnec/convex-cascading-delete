@@ -301,19 +301,22 @@ export function makeBatchDeleteHandler(
     },
     handler: async (ctx: any, { targets, jobId }: any) => {
       const batchSummary: Record<string, number> = {};
+      const errors: string[] = [];
 
       for (const { table, id } of targets) {
         try {
           await ctx.db.delete(id);
           batchSummary[table] = (batchSummary[table] || 0) + 1;
-        } catch {
-          // Already deleted
+        } catch (error: any) {
+          // Document already deleted or other error - log for observability
+          errors.push(`${table}:${id} - ${error.message || 'Unknown error'}`);
         }
       }
 
       await ctx.runMutation(componentRef.lib.reportBatchComplete, {
         jobId,
         batchSummary: JSON.stringify(batchSummary),
+        errors: errors.length > 0 ? JSON.stringify(errors) : undefined,
       });
     },
   });
