@@ -46,6 +46,7 @@ export function TourOverlay({
   organizationsLength,
 }: TourOverlayProps) {
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const positionedForStep = useRef(-1);
   const [highlightStyle, setHighlightStyle] = useState<React.CSSProperties>({});
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
   const [arrowLeft, setArrowLeft] = useState(0);
@@ -95,19 +96,14 @@ export function TourOverlay({
       tTop = rect.bottom + gap;
     }
 
+    positionedForStep.current = tourStep;
     setPlacement(newPlacement);
     setTooltipStyle({ top: tTop, left: tLeft, width: tooltipW });
     setArrowLeft(rect.left + rect.width / 2 - tLeft - 10);
   }, [tourStep, demoTabRef, seedBtnRef, firstInlineBtnRef, firstBatchedBtnRef]);
 
   useEffect(() => {
-    if (tourStep <= 0) {
-      setHighlightStyle({});
-      setTooltipStyle({});
-      return;
-    }
-    setHighlightStyle({});
-    setTooltipStyle({});
+    if (tourStep <= 0) return;
     const timer = setTimeout(updateTourPosition, 150);
     window.addEventListener("resize", updateTourPosition);
     window.addEventListener("scroll", updateTourPosition, true);
@@ -118,7 +114,10 @@ export function TourOverlay({
     };
   }, [tourStep, updateTourPosition, organizationsLength]);
 
-  const hasHighlight = tourStep > 0 && Object.keys(highlightStyle).length > 0;
+  const hasHighlight =
+    tourStep > 0 &&
+    positionedForStep.current === tourStep &&
+    Object.keys(highlightStyle).length > 0;
 
   useEffect(() => {
     if (hasHighlight && tooltipRef.current) {

@@ -17,7 +17,6 @@ import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import type {
   GenericMutationCtx,
-  GenericQueryCtx,
   GenericDataModel,
   FunctionReference,
 } from "convex/server";
@@ -240,7 +239,7 @@ export class CascadingDelete {
             .query(rule.to)
             .withIndex(rule.via, (q: any) => q.eq(rule.field, "__validation__"))
             .first();
-        } catch (error) {
+        } catch {
           throw new Error(
             `Cascade validation failed: Index "${rule.via}" with field "${rule.field}" ` +
               `does not exist on table "${rule.to}". Define it in your schema. ` +
@@ -262,7 +261,7 @@ export class CascadingDelete {
     return new Proxy(db, {
       get(target, prop, receiver) {
         if (prop === "delete") {
-          return (...args: any[]) => {
+          return (..._args: any[]) => {
             throw new Error(
               "Direct db.delete() is disabled. " +
                 "Use CascadingDelete.deleteWithCascade() instead."
