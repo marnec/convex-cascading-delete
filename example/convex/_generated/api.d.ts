@@ -9,8 +9,12 @@
  */
 
 import type * as cascading from "../cascading.js";
+import type * as deletions from "../deletions.js";
 import type * as http from "../http.js";
-import type * as operations from "../operations.js";
+import type * as orgTree from "../orgTree.js";
+import type * as queries from "../queries.js";
+import type * as seed from "../seed.js";
+import type * as seedLarge from "../seedLarge.js";
 
 import type {
   ApiFromModules,
@@ -20,8 +24,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   cascading: typeof cascading;
+  deletions: typeof deletions;
   http: typeof http;
-  operations: typeof operations;
+  orgTree: typeof orgTree;
+  queries: typeof queries;
+  seed: typeof seed;
+  seedLarge: typeof seedLarge;
 }>;
 
 /**
