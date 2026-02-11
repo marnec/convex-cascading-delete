@@ -74,6 +74,8 @@ function App() {
 
   const handleDeleteInline = async (orgId: string) => {
     setDeletingId(orgId);
+    setLastSummary(null);
+    setJobId(null);
     try {
       const summary = await deleteOrg({ organizationId: orgId as any });
       setLastSummary(summary);
@@ -85,6 +87,8 @@ function App() {
 
   const handleDeleteBatched = async (orgId: string) => {
     setDeletingId(orgId);
+    setLastSummary(null);
+    setJobId(null);
     try {
       const result = await deleteOrgBatched({
         organizationId: orgId as any,
