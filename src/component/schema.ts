@@ -32,5 +32,6 @@ export default defineSchema({
     completedCount: v.number(),
     completedSummary: v.string(),   // JSON-serialized Record<string, number>
     error: v.optional(v.string()),  // JSON-serialized string[] of error messages
+    onCompleteHandleStr: v.optional(v.string()), // serialized FunctionReference for completion callback
   }).index("byStatus", ["status"]),
 });

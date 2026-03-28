@@ -27,7 +27,14 @@ export type CascadeRule = {
   to: string;
   via: string;
   field: string;
+  softDeleteField?: string;
 };
+
+/**
+ * Custom deletion function for a specific table.
+ * Called instead of ctx.db.delete() when registered via the deleters option.
+ */
+export type TableDeleter = (ctx: any, id: string, doc: any) => Promise<void>;
 
 /**
  * Complete cascade configuration mapping source tables to their cascade rules.

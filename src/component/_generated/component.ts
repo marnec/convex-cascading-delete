@@ -31,6 +31,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           batchSize: number;
           deleteHandleStr: string;
           targets: Array<{ id: string; table: string }>;
+          onCompleteHandleStr?: string;
         },
         string,
         Name
@@ -58,7 +59,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       reportBatchComplete: FunctionReference<
         "mutation",
         "internal",
-        { batchSummary: string; jobId: string },
+        { batchSummary: string; errors?: string; jobId: string },
         null,
         Name
       >;

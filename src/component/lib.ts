@@ -30,9 +30,10 @@ export const createBatchJob = mutation({
     targets: v.array(v.object({ table: v.string(), id: v.string() })),
     deleteHandleStr: v.string(),
     batchSize: v.number(),
+    onCompleteHandleStr: v.optional(v.string()),
   },
   returns: v.string(),
-  handler: async (ctx, { targets, deleteHandleStr, batchSize }) => {
+  handler: async (ctx, { targets, deleteHandleStr, batchSize, onCompleteHandleStr }) => {
     const jobId = await ctx.db.insert("deletionJobs", {
       status: "pending",
       totalTargetCount: targets.length,
@@ -41,6 +42,7 @@ export const createBatchJob = mutation({
       deleteHandleStr,
       completedCount: 0,
       completedSummary: JSON.stringify({}),
+      onCompleteHandleStr,
     });
 
     return jobId;
@@ -164,14 +166,22 @@ export const reportBatchComplete = mutation({
       updates.error = JSON.stringify([...existingErrors, ...batchErrors]);
     }
 
-    if (
+    const isCompleted =
       newCompletedCount >= job.totalTargetCount &&
-      job.remainingTargets.length === 0
-    ) {
+      job.remainingTargets.length === 0;
+
+    if (isCompleted) {
       updates.status = "completed";
     }
 
     await ctx.db.patch(jobId as Id<"deletionJobs">, updates);
+
+    // Schedule onComplete callback when job finishes
+    if (isCompleted && job.onCompleteHandleStr) {
+      await ctx.scheduler.runAfter(0, job.onCompleteHandleStr as any, {
+        summary: JSON.stringify(currentSummary),
+      });
+    }
   },
 });
 

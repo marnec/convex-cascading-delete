@@ -396,4 +396,147 @@ describe("CascadingDelete", () => {
       );
     });
   });
+
+  describe("custom deleters", () => {
+    it("should call custom deleter instead of db.delete for matched table", async () => {
+      const db = createMockDb({});
+      const ctx = createMockCtx(db);
+      const deleterCalls: Array<{ id: string; doc: any }> = [];
+
+      // Add a doc so db.get returns it
+      (db as any).get = async (id: string) => ({ _id: id, name: "Test User" });
+
+      const rules: CascadeConfig = {};
+      const cd = new CascadingDelete(noopComponent, {
+        rules,
+        deleters: {
+          users: async (_ctx: any, id: string, doc: any) => {
+            deleterCalls.push({ id, doc });
+            await _ctx.db.delete(id);
+          },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      expect(summary).toEqual({ users: 1 });
+      expect(deleterCalls).toHaveLength(1);
+      expect(deleterCalls[0].id).toBe("user1");
+      expect(deleterCalls[0].doc).toEqual({ _id: "user1", name: "Test User" });
+    });
+
+    it("should use db.delete for tables without custom deleter", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      (db as any).get = async (id: string) => ({ _id: id });
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, {
+        rules,
+        deleters: {
+          users: async (_ctx: any, id: string, _doc: any) => {
+            await _ctx.db.delete(id);
+          },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // posts deleted via db.delete (no custom deleter), users via custom deleter
+      expect(summary).toEqual({ users: 1, posts: 1 });
+      expect(db._deleted).toContain("post1");
+      expect(db._deleted).toContain("user1");
+    });
+
+    it("should skip deletion when custom deleter receives null doc", async () => {
+      const db = createMockDb({});
+      const ctx = createMockCtx(db);
+      const deleterCalls: string[] = [];
+
+      // db.get returns null (doc already deleted)
+      (db as any).get = async () => null;
+
+      const cd = new CascadingDelete(noopComponent, {
+        rules: {},
+        deleters: {
+          users: async (_ctx: any, id: string, _doc: any) => {
+            deleterCalls.push(id);
+          },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // Should not count or call deleter when doc is null
+      expect(summary.users).toBeUndefined();
+      expect(deleterCalls).toHaveLength(0);
+    });
+  });
+
+  describe("soft delete", () => {
+    it("should patch with softDeleteField instead of deleting dependents", async () => {
+      const patchCalls: Array<{ id: string; fields: any }> = [];
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      (db as any).patch = async (id: string, fields: any) => {
+        patchCalls.push({ id, fields });
+      };
+      const ctx = createMockCtx(db);
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId", softDeleteField: "deletedAt" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // posts should be soft-deleted (patched), user hard-deleted
+      expect(summary).toEqual({ users: 1, posts: 1 });
+      expect(patchCalls).toHaveLength(1);
+      expect(patchCalls[0].id).toBe("post1");
+      expect(patchCalls[0].fields.deletedAt).toBeTypeOf("number");
+      // user1 should be hard-deleted (no softDeleteField on root)
+      expect(db._deleted).toContain("user1");
+      expect(db._deleted).not.toContain("post1");
+    });
+  });
+
+  describe("onComplete callback", () => {
+    it("should call onComplete with summary after inline cascade", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      const ctx = createMockCtx(db);
+      let completeSummary: any = null;
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, { rules });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1", {
+        onComplete: async (_ctx: any, s: any) => {
+          completeSummary = s;
+        },
+      });
+
+      expect(completeSummary).toEqual(summary);
+      expect(completeSummary).toEqual({ users: 1, posts: 1 });
+    });
+
+    it("should not fail when onComplete is not provided", async () => {
+      const db = createMockDb({});
+      const ctx = createMockCtx(db);
+      const cd = new CascadingDelete(noopComponent, { rules: {} });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+      expect(summary).toEqual({ users: 1 });
+    });
+  });
 });

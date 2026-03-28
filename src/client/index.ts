@@ -34,6 +34,7 @@ export type {
   DeletionSummary,
   DeletionTarget,
   BatchJobStatus,
+  TableDeleter,
 } from "../component/types.js";
 
 type MutationCtx = {
@@ -41,6 +42,7 @@ type MutationCtx = {
   runMutation: GenericMutationCtx<GenericDataModel>["runMutation"];
   runQuery: GenericMutationCtx<GenericDataModel>["runQuery"];
   scheduler: GenericMutationCtx<GenericDataModel>["scheduler"];
+  storage: GenericMutationCtx<GenericDataModel>["storage"];
 };
 
 type QueryCtx = {
@@ -69,10 +71,15 @@ type QueryCtx = {
 export class CascadingDelete {
   private rules: CascadeConfig;
   private component: ComponentApi;
+  private deleters: Record<string, (ctx: any, id: string, doc: any) => Promise<void>>;
 
-  constructor(component: ComponentApi, options: { rules: CascadeConfig }) {
+  constructor(component: ComponentApi, options: {
+    rules: CascadeConfig;
+    deleters?: Record<string, (ctx: any, id: string, doc: any) => Promise<void>>;
+  }) {
     this.component = component;
     this.rules = options.rules;
+    this.deleters = options.deleters ?? {};
   }
 
   /**
@@ -87,12 +94,19 @@ export class CascadingDelete {
   async deleteWithCascade(
     ctx: MutationCtx,
     table: string,
-    id: string
+    id: string,
+    options?: {
+      onComplete?: (ctx: MutationCtx, summary: DeletionSummary) => Promise<void>;
+    }
   ): Promise<DeletionSummary> {
     const visited = new Set<string>();
     const summary: DeletionSummary = {};
 
     await this.collectAndDelete(ctx, table, id, visited, summary);
+
+    if (options?.onComplete) {
+      await options.onComplete(ctx, summary);
+    }
 
     return summary;
   }
@@ -100,13 +114,15 @@ export class CascadingDelete {
   /**
    * Internal recursive function for traversal and deletion.
    * Post-order: deletes children before parents.
+   * Supports custom deleters, soft delete via softDeleteField on rules.
    */
   private async collectAndDelete(
     ctx: MutationCtx,
     table: string,
     id: string,
     visited: Set<string>,
-    summary: DeletionSummary
+    summary: DeletionSummary,
+    softDeleteField?: string
   ): Promise<void> {
     const key = `${table}:${id}`;
     if (visited.has(key)) {
@@ -123,15 +139,26 @@ export class CascadingDelete {
         .collect();
 
       for (const dep of dependents) {
-        await this.collectAndDelete(ctx, rule.to, dep._id, visited, summary);
+        await this.collectAndDelete(ctx, rule.to, dep._id, visited, summary, rule.softDeleteField);
       }
     }
 
-    try {
-      await ctx.db.delete(id);
+    if (softDeleteField) {
+      await ctx.db.patch(id, { [softDeleteField]: Date.now() });
       summary[table] = (summary[table] || 0) + 1;
-    } catch {
-      // Already deleted (OCC retry or concurrent cascade)
+    } else if (this.deleters[table]) {
+      const doc = await ctx.db.get(id);
+      if (doc) {
+        await this.deleters[table](ctx, id, doc);
+        summary[table] = (summary[table] || 0) + 1;
+      }
+    } else {
+      try {
+        await ctx.db.delete(id);
+        summary[table] = (summary[table] || 0) + 1;
+      } catch {
+        // Already deleted (OCC retry or concurrent cascade)
+      }
     }
   }
 
@@ -152,6 +179,7 @@ export class CascadingDelete {
     options: {
       batchHandlerRef: FunctionReference<"mutation">;
       batchSize?: number;
+      onComplete?: FunctionReference<"mutation">;
     }
   ): Promise<{ jobId: string | null; initialSummary: DeletionSummary }> {
     const batchSize = options.batchSize || 2000;
@@ -181,10 +209,15 @@ export class CascadingDelete {
     }
 
     const handle = await createFunctionHandle(options.batchHandlerRef);
+    const onCompleteHandle = options.onComplete
+      ? await createFunctionHandle(options.onComplete)
+      : undefined;
+
     const jobId = await ctx.runMutation(this.component.lib.createBatchJob, {
       targets: remaining,
       deleteHandleStr: handle,
       batchSize,
+      onCompleteHandleStr: onCompleteHandle,
     });
 
     await ctx.runMutation(this.component.lib.kickOffProcessing, { jobId });
@@ -291,7 +324,8 @@ export class CascadingDelete {
  */
 export function makeBatchDeleteHandler(
   internalMutationBuilder: any,
-  componentRef: ComponentApi
+  componentRef: ComponentApi,
+  deleters?: Record<string, (ctx: any, id: string, doc: any) => Promise<void>>
 ) {
   return internalMutationBuilder({
     args: {
@@ -304,10 +338,18 @@ export function makeBatchDeleteHandler(
 
       for (const { table, id } of targets) {
         try {
-          await ctx.db.delete(id);
-          batchSummary[table] = (batchSummary[table] || 0) + 1;
+          const deleter = deleters?.[table];
+          if (deleter) {
+            const doc = await ctx.db.get(id);
+            if (doc) {
+              await deleter(ctx, id, doc);
+              batchSummary[table] = (batchSummary[table] || 0) + 1;
+            }
+          } else {
+            await ctx.db.delete(id);
+            batchSummary[table] = (batchSummary[table] || 0) + 1;
+          }
         } catch (error: any) {
-          // Document already deleted or other error - log for observability
           errors.push(`${table}:${id} - ${error.message || 'Unknown error'}`);
         }
       }
