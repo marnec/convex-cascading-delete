@@ -149,8 +149,18 @@ export class CascadingDelete {
     } else if (this.deleters[table]) {
       const doc = await ctx.db.get(id);
       if (doc) {
-        await this.deleters[table](ctx, id, doc);
-        summary[table] = (summary[table] || 0) + 1;
+        try {
+          await this.deleters[table](ctx, id, doc);
+          summary[table] = (summary[table] || 0) + 1;
+        } catch {
+          // Deleter failed (e.g., missing aggregate key) — fall back to raw delete
+          try {
+            await ctx.db.delete(id);
+            summary[table] = (summary[table] || 0) + 1;
+          } catch {
+            // Already deleted
+          }
+        }
       }
     } else {
       try {
@@ -342,15 +352,21 @@ export function makeBatchDeleteHandler(
           if (deleter) {
             const doc = await ctx.db.get(id);
             if (doc) {
-              await deleter(ctx, id, doc);
+              try {
+                await deleter(ctx, id, doc);
+              } catch {
+                // Deleter failed — fall back to raw delete
+                await ctx.db.delete(id);
+              }
               batchSummary[table] = (batchSummary[table] || 0) + 1;
             }
           } else {
             await ctx.db.delete(id);
             batchSummary[table] = (batchSummary[table] || 0) + 1;
           }
-        } catch (error: any) {
-          errors.push(`${table}:${id} - ${error.message || 'Unknown error'}`);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          errors.push(`${table}:${id} - ${message}`);
         }
       }
 

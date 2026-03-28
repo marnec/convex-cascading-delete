@@ -476,6 +476,167 @@ describe("CascadingDelete", () => {
       expect(summary.users).toBeUndefined();
       expect(deleterCalls).toHaveLength(0);
     });
+
+    it("should fall back to raw db.delete when custom deleter throws", async () => {
+      const db = createMockDb({});
+      const ctx = createMockCtx(db);
+
+      (db as any).get = async (id: string) => ({ _id: id, name: "User" });
+
+      const cd = new CascadingDelete(noopComponent, {
+        rules: {},
+        deleters: {
+          users: async () => {
+            throw new Error("DELETE_MISSING_KEY: aggregate entry not found");
+          },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // Should still succeed via raw delete fallback
+      expect(summary).toEqual({ users: 1 });
+      expect(db._deleted).toContain("user1");
+    });
+
+    it("should cascade children even when parent deleter throws", async () => {
+      const db = createMockDb({
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      const ctx = createMockCtx(db);
+
+      (db as any).get = async (id: string) => ({ _id: id });
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, {
+        rules,
+        deleters: {
+          users: async () => {
+            throw new Error("Trigger failed");
+          },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "users", "user1");
+
+      // Children deleted normally, parent via fallback
+      expect(summary).toEqual({ users: 1, posts: 1 });
+      expect(db._deleted).toContain("post1");
+      expect(db._deleted).toContain("user1");
+    });
+
+    it("siblings of a failing node are all deleted", async () => {
+      // project → task1 (OK), task2 (FAILS), task3 (OK)
+      const db = createMockDb({
+        tasks: [
+          { _id: "task1", projectId: "proj1" },
+          { _id: "task2", projectId: "proj1" },
+          { _id: "task3", projectId: "proj1" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+      (db as any).get = async (id: string) => ({ _id: id });
+
+      const cd = new CascadingDelete(noopComponent, {
+        rules: {
+          projects: [{ to: "tasks", via: "by_project", field: "projectId" }],
+        },
+        deleters: {
+          tasks: async (_ctx: any, id: string) => {
+            if (id === "task2") throw new Error("Missing aggregate key");
+            await _ctx.db.delete(id);
+          },
+          projects: async (_ctx: any, id: string) => { await _ctx.db.delete(id); },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "projects", "proj1");
+
+      expect(summary).toEqual({ projects: 1, tasks: 3 });
+      expect(db._deleted).toContain("task1");
+      expect(db._deleted).toContain("task2"); // fallback raw delete
+      expect(db._deleted).toContain("task3");
+      expect(db._deleted).toContain("proj1");
+    });
+
+    it("children of a failing node are deleted before the fallback", async () => {
+      // project → task (FAILS) → comment1, comment2
+      const db = createMockDb({
+        tasks: [{ _id: "task1", projectId: "proj1" }],
+        comments: [
+          { _id: "c1", taskId: "task1" },
+          { _id: "c2", taskId: "task1" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+      (db as any).get = async (id: string) => ({ _id: id });
+
+      const cd = new CascadingDelete(noopComponent, {
+        rules: {
+          projects: [{ to: "tasks", via: "by_project", field: "projectId" }],
+          tasks: [{ to: "comments", via: "by_task", field: "taskId" }],
+        },
+        deleters: {
+          tasks: async () => { throw new Error("Aggregate missing"); },
+          projects: async (_ctx: any, id: string) => { await _ctx.db.delete(id); },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "projects", "proj1");
+
+      expect(summary).toEqual({ projects: 1, tasks: 1, comments: 2 });
+      // Comments deleted before task (post-order)
+      expect(db._deleted.indexOf("c1")).toBeLessThan(db._deleted.indexOf("task1"));
+      expect(db._deleted.indexOf("c2")).toBeLessThan(db._deleted.indexOf("task1"));
+      expect(db._deleted).toContain("proj1");
+    });
+
+    it("mixed: some siblings fail, their children still cascade, healthy siblings unaffected", async () => {
+      // project → task1 (OK, has comment1), task2 (FAILS, has comment2, comment3), task3 (OK)
+      const db = createMockDb({
+        tasks: [
+          { _id: "task1", projectId: "proj1" },
+          { _id: "task2", projectId: "proj1" },
+          { _id: "task3", projectId: "proj1" },
+        ],
+        comments: [
+          { _id: "c1", taskId: "task1" },
+          { _id: "c2", taskId: "task2" },
+          { _id: "c3", taskId: "task2" },
+        ],
+      });
+      const ctx = createMockCtx(db);
+      (db as any).get = async (id: string) => ({ _id: id });
+
+      const cd = new CascadingDelete(noopComponent, {
+        rules: {
+          projects: [{ to: "tasks", via: "by_project", field: "projectId" }],
+          tasks: [{ to: "comments", via: "by_task", field: "taskId" }],
+        },
+        deleters: {
+          tasks: async (_ctx: any, id: string) => {
+            if (id === "task2") throw new Error("Missing key");
+            await _ctx.db.delete(id);
+          },
+          projects: async (_ctx: any, id: string) => { await _ctx.db.delete(id); },
+        },
+      });
+
+      const summary = await cd.deleteWithCascade(ctx, "projects", "proj1");
+
+      expect(summary).toEqual({ projects: 1, tasks: 3, comments: 3 });
+      // All documents deleted
+      expect(db._deleted).toHaveLength(7);
+      for (const id of ["task1", "task2", "task3", "c1", "c2", "c3", "proj1"]) {
+        expect(db._deleted).toContain(id);
+      }
+      // Post-order: all comments before their parent tasks
+      expect(db._deleted.indexOf("c1")).toBeLessThan(db._deleted.indexOf("task1"));
+      expect(db._deleted.indexOf("c2")).toBeLessThan(db._deleted.indexOf("task2"));
+      expect(db._deleted.indexOf("c3")).toBeLessThan(db._deleted.indexOf("task2"));
+    });
   });
 
   describe("soft delete", () => {
