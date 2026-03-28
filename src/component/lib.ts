@@ -166,20 +166,23 @@ export const reportBatchComplete = mutation({
       updates.error = JSON.stringify([...existingErrors, ...batchErrors]);
     }
 
-    const isCompleted =
-      newCompletedCount >= job.totalTargetCount &&
-      job.remainingTargets.length === 0;
+    // Terminal state: no remaining targets means all batches have been dispatched
+    const isTerminal = job.remainingTargets.length === 0;
 
-    if (isCompleted) {
-      updates.status = "completed";
+    if (isTerminal) {
+      const hasErrors = updates.error || job.error;
+      updates.status = hasErrors && newCompletedCount < job.totalTargetCount
+        ? "failed"
+        : "completed";
     }
 
     await ctx.db.patch(jobId as Id<"deletionJobs">, updates);
 
-    // Schedule onComplete callback when job finishes
-    if (isCompleted && job.onCompleteHandleStr) {
+    // Schedule callback when job reaches a terminal state (completed or failed)
+    if (isTerminal && job.onCompleteHandleStr) {
       await ctx.scheduler.runAfter(0, job.onCompleteHandleStr as any, {
         summary: JSON.stringify(currentSummary),
+        status: updates.status,
       });
     }
   },

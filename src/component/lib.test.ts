@@ -233,6 +233,39 @@ describe("reportBatchComplete", () => {
     expect(status!.completedCount).toBe(1);
   });
 
+  it("should mark job as failed when errors occur and not all targets were deleted", async () => {
+    const t = convexTest(schema, modules);
+
+    const jobId = await t.mutation(api.lib.createBatchJob, {
+      targets: [
+        { table: "users", id: "u1" },
+        { table: "users", id: "u2" },
+      ],
+      deleteHandleStr: "handle:fail",
+      batchSize: 100,
+    });
+
+    // Simulate: all targets dispatched, but only 1 of 2 succeeded
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId as any, {
+        remainingTargets: [],
+        status: "processing",
+      });
+    });
+
+    await t.mutation(api.lib.reportBatchComplete, {
+      jobId,
+      batchSummary: JSON.stringify({ users: 1 }),
+      errors: JSON.stringify(["users:u2 - Document not found"]),
+    });
+
+    const status = await t.query(api.lib.getJobStatus, { jobId });
+    expect(status!.status).toBe("failed");
+    expect(status!.completedCount).toBe(1);
+    expect(status!.error).toBeDefined();
+    expect(JSON.parse(status!.error!)).toContain("users:u2 - Document not found");
+  });
+
   it("should silently handle non-existent job", async () => {
     const t = convexTest(schema, modules);
 

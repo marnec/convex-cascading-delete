@@ -91,12 +91,12 @@ export class CascadingDelete {
    * @param id - Document ID to delete
    * @returns Summary of documents deleted per table
    */
-  async deleteWithCascade(
-    ctx: MutationCtx,
+  async deleteWithCascade<Ctx extends MutationCtx>(
+    ctx: Ctx,
     table: string,
     id: string,
     options?: {
-      onComplete?: (ctx: MutationCtx, summary: DeletionSummary) => Promise<void>;
+      onComplete?: (ctx: Ctx, summary: DeletionSummary) => Promise<void>;
     }
   ): Promise<DeletionSummary> {
     const visited = new Set<string>();
