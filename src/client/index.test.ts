@@ -84,6 +84,20 @@ function createMockDb(tables: Record<string, any[]>) {
       deletedSet.add(id);
       deleted.push(id);
     },
+    get: async (id: string) => {
+      if (deletedSet.has(id)) return null;
+      for (const docs of Object.values(tables)) {
+        const doc = docs.find((d) => d._id === id);
+        if (doc) return doc;
+      }
+      return null;
+    },
+    patch: async (id: string, fields: Record<string, any>) => {
+      for (const docs of Object.values(tables)) {
+        const doc = docs.find((d) => d._id === id);
+        if (doc) Object.assign(doc, fields);
+      }
+    },
     _deleted: deleted,
     _deletedSet: deletedSet,
   };
@@ -331,6 +345,43 @@ describe("CascadingDelete", () => {
       // Remaining 2 go to batch job
       expect(result.jobId).toBe("mock-job-id");
       expect(ctx.runMutation).toHaveBeenCalled();
+    });
+
+    it("should call custom deleters for first batch targets", async () => {
+      const db = createMockDb({
+        users: [{ _id: "user1", name: "Alice" }],
+        posts: [{ _id: "post1", authorId: "user1" }],
+      });
+      const ctx = createMockCtx(db);
+      const deleterCalls: Array<{ id: string; doc: any }> = [];
+
+      const rules: CascadeConfig = {
+        users: [{ to: "posts", via: "by_author", field: "authorId" }],
+      };
+      const cd = new CascadingDelete(noopComponent, {
+        rules,
+        deleters: {
+          users: async (_ctx: any, id: string, doc: any) => {
+            deleterCalls.push({ id, doc });
+            await _ctx.db.delete(id);
+          },
+        },
+      });
+
+      const result = await cd.deleteWithCascadeBatched(ctx, "users", "user1", {
+        batchHandlerRef: "mockRef" as any,
+        batchSize: 100,
+      });
+
+      // All deleted inline, no job needed
+      expect(result.jobId).toBeNull();
+      // Custom deleter was called for user (not for post)
+      expect(deleterCalls).toHaveLength(1);
+      expect(deleterCalls[0].id).toBe("user1");
+      expect(deleterCalls[0].doc).toEqual({ _id: "user1", name: "Alice" });
+      // Both deleted
+      expect(db._deleted).toContain("user1");
+      expect(db._deleted).toContain("post1");
     });
   });
 

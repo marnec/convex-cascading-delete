@@ -199,14 +199,27 @@ export class CascadingDelete {
     const targets: DeletionTarget[] = [];
     await this.collectTargets(ctx, table, id, visited, targets);
 
-    // Phase 2: Delete first batch inline
+    // Phase 2: Delete first batch inline (respects custom deleters)
     const firstBatch = targets.slice(0, batchSize);
     const initialSummary: DeletionSummary = {};
 
     for (const target of firstBatch) {
       try {
-        await ctx.db.delete(target.id);
-        initialSummary[target.table] = (initialSummary[target.table] || 0) + 1;
+        const deleter = this.deleters[target.table];
+        if (deleter) {
+          const doc = await ctx.db.get(target.id);
+          if (doc) {
+            try {
+              await deleter(ctx, target.id, doc);
+            } catch {
+              await ctx.db.delete(target.id);
+            }
+            initialSummary[target.table] = (initialSummary[target.table] || 0) + 1;
+          }
+        } else {
+          await ctx.db.delete(target.id);
+          initialSummary[target.table] = (initialSummary[target.table] || 0) + 1;
+        }
       } catch {
         // Already deleted
       }
