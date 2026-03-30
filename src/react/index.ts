@@ -44,7 +44,7 @@ export function useDeletionJobStatus(
   api: any,
   jobId: string | null
 ): {
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
   totalTargetCount: number;
   completedCount: number;
   completedSummary: string;

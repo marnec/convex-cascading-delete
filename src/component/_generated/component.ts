@@ -24,6 +24,13 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
+      cancelJob: FunctionReference<
+        "mutation",
+        "internal",
+        { jobId: string },
+        null,
+        Name
+      >;
       createBatchJob: FunctionReference<
         "mutation",
         "internal",
@@ -32,6 +39,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           deleteHandleStr: string;
           targets: Array<{ id: string; table: string }>;
           onCompleteHandleStr?: string;
+          onCompleteContext?: string;
         },
         string,
         Name
@@ -44,22 +52,22 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           completedCount: number;
           completedSummary: string;
           error?: string;
-          status: "pending" | "processing" | "completed" | "failed";
+          status: "pending" | "processing" | "completed" | "failed" | "cancelled";
           totalTargetCount: number;
         } | null,
-        Name
-      >;
-      kickOffProcessing: FunctionReference<
-        "mutation",
-        "internal",
-        { jobId: string },
-        null,
         Name
       >;
       reportBatchComplete: FunctionReference<
         "mutation",
         "internal",
         { batchSummary: string; errors?: string; jobId: string },
+        null,
+        Name
+      >;
+      startProcessing: FunctionReference<
+        "mutation",
+        "internal",
+        { jobId: string },
         null,
         Name
       >;

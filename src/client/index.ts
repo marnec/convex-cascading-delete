@@ -19,6 +19,7 @@ import type {
   GenericMutationCtx,
   GenericDataModel,
   FunctionReference,
+  FunctionVisibility,
 } from "convex/server";
 import type { ComponentApi } from "../component/_generated/component.js";
 import type {
@@ -187,9 +188,10 @@ export class CascadingDelete {
     table: string,
     id: string,
     options: {
-      batchHandlerRef: FunctionReference<"mutation">;
+      batchHandlerRef: FunctionReference<"mutation", FunctionVisibility>;
       batchSize?: number;
-      onComplete?: FunctionReference<"mutation">;
+      onComplete?: FunctionReference<"mutation", FunctionVisibility>;
+      onCompleteContext?: Record<string, unknown>;
     }
   ): Promise<{ jobId: string | null; initialSummary: DeletionSummary }> {
     const batchSize = options.batchSize || 2000;
@@ -225,9 +227,20 @@ export class CascadingDelete {
       }
     }
 
-    // Phase 3: Schedule remaining batches
+    // Phase 3: Schedule remaining batches (or finish inline)
     const remaining = targets.slice(batchSize);
     if (remaining.length === 0) {
+      // All targets fit in the first batch — call onComplete inline
+      if (options.onComplete) {
+        const handle = await createFunctionHandle(options.onComplete);
+        await ctx.scheduler.runAfter(0, handle as any, {
+          summary: JSON.stringify(initialSummary),
+          status: "completed",
+          context: options.onCompleteContext
+            ? JSON.stringify(options.onCompleteContext)
+            : undefined,
+        });
+      }
       return { jobId: null, initialSummary };
     }
 
@@ -241,9 +254,12 @@ export class CascadingDelete {
       deleteHandleStr: handle,
       batchSize,
       onCompleteHandleStr: onCompleteHandle,
+      onCompleteContext: options.onCompleteContext
+        ? JSON.stringify(options.onCompleteContext)
+        : undefined,
     });
 
-    await ctx.runMutation(this.component.lib.kickOffProcessing, { jobId });
+    await ctx.runMutation(this.component.lib.startProcessing, { jobId });
 
     return { jobId, initialSummary };
   }
@@ -304,6 +320,20 @@ export class CascadingDelete {
         }
       }
     }
+  }
+
+  /**
+   * Cancels a running batch deletion job and its underlying workflow.
+   * No-op if the job is already in a terminal state.
+   *
+   * @param ctx - Mutation context
+   * @param jobId - Job ID returned from deleteWithCascadeBatched
+   */
+  async cancelBatchJob(
+    ctx: MutationCtx,
+    jobId: string
+  ): Promise<void> {
+    await ctx.runMutation(this.component.lib.cancelJob, { jobId });
   }
 
   /**

@@ -79,7 +79,7 @@ export type DeletionTarget = {
  * Provides progress tracking and completion details.
  */
 export type BatchJobStatus = {
-  status: "pending" | "processing" | "completed" | "failed";
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
   totalTargetCount: number;
   completedCount: number;
   completedSummary: DeletionSummary;

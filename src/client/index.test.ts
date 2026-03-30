@@ -119,7 +119,8 @@ function createMockCtx(db: any) {
 const noopComponent: any = {
   lib: {
     createBatchJob: "component.lib.createBatchJob",
-    kickOffProcessing: "component.lib.kickOffProcessing",
+    startProcessing: "component.lib.startProcessing",
+    cancelJob: "component.lib.cancelJob",
     reportBatchComplete: "component.lib.reportBatchComplete",
     getJobStatus: "component.lib.getJobStatus",
   },
