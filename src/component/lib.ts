@@ -16,6 +16,7 @@ import { mutation, query, internalMutation } from "./_generated/server.js";
 import { internal, components } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { WorkflowManager } from "@convex-dev/workflow";
+import type { FunctionReference } from "convex/server";
 
 const CHUNK_SIZE = 500;
 
@@ -116,9 +117,11 @@ export const startProcessing = mutation({
       throw new Error(`Job ${jobId} is not in pending state`);
     }
 
-    const workflowId = await workflow.start(ctx, internal.lib.deletionWorkflow, {
-      jobId,
-    });
+    const workflowId = await workflow.start(
+      ctx,
+      deletionWorkflow as unknown as FunctionReference<"mutation", "internal">,
+      { jobId },
+    );
 
     await ctx.db.patch(jobId as Id<"deletionJobs">, {
       status: "processing",
